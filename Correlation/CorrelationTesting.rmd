@@ -1,0 +1,56 @@
+---
+title: "Test Correlations with CO2 emissions"
+author: Philipp Bauer
+output: html_document
+---
+
+# 1. Import Data
+```{r}
+data <- read.csv("CO2_Emissions_Canada.csv", stringsAsFactors = TRUE)
+str(data)
+```
+
+# 2. Check Correlation between Fuel Consumption and CO2 Emission
+```{r}
+plot(data$Fuel.Consumption.City..L.100.km., data$CO2.Emissions.g.km., col = 'red', pch = 20,
+     main = "Fuel Economy - CO2 Emissions", xlab = "Fuel Economy", ylab = "CO2 Emissions")
+points(data$Fuel.Consumption.Hwy..L.100.km., data$CO2.Emissions.g.km., col = 'green', pch = 20)
+points(data$Fuel.Consumption.Comb..L.100.km., data$CO2.Emissions.g.km., col = 'orange', pch = 20)
+legend("topleft", c("City", "Highway", "Combined"), col = c("red", "green", "orange"), pch = 20,)
+
+abline(v=mean(data$Fuel.Consumption.City..L.100.km.), col="red")
+abline(v=mean(data$Fuel.Consumption.Hwy..L.100.km.), col="green")
+abline(v=mean(data$Fuel.Consumption.Comb..L.100.km.), col="orange")
+```
+
+No Surprises here, the Fuel Economy is highly correlated with the CO2 emissions.
+What is more interesting is that, although the fuel economy is better on the highway, the emissions are higher on the highway than the city. Suggesting higher speeds cause higher emissions independent of the Fuel Economy.
+Furthermore, per Economy type (i.e. Highway, City, Combined) there seem to be multiple "lines" with different gradients.
+
+## 2.1. What causes different Gradients in the CO2 Correlation per Fuel Economy type?
+```{r}
+ftCols <- 1:length(unique(data$Fuel.Type))
+names(ftCols) <- c("X", "Z", "D", "E", "N")
+plot(data$Fuel.Consumption.Comb..L.100.km., data$CO2.Emissions.g.km., col = ftCols[as.character(data$Fuel.Type)], pch = 20,
+     main="Combined Fuel Economy - CO2 Emissions for each Fuel Type", xlab = "Fuel Economy", ylab = "CO2 Emissions")
+legend("topleft", c("Regular Gasoline", "Premium Gasoline", "Diesel", "Ethanol (E85)", "Natural Gas"), col = 1:5, pch = 20)
+```
+
+Looking just at the combined Fuel Economy for this, we can clearly see that the gradients are caused by the different fuel types used.
+Looks like that the gasoline type (i.e. regular and premium) does have no effect on Emissions.
+For a Fuel Economy shared by all Fuel Types, the CO2 Emissions are Ethanol < Gasoline < Diesel.
+But the ranges of the fuel types vary quiet a bit. The minimums of the Fuel Economy are Gasoline < Diesel < Ethanol and the minimums for Emissions are Gasoline < Ethanol < Diesel.
+
+# 3. Recalculate correlation considering fuel types
+```{r}
+cor(data$Fuel.Consumption.City..L.100.km., data$CO2.Emissions.g.km.)
+cor(data$Fuel.Consumption.Hwy..L.100.km., data$CO2.Emissions.g.km.)
+cor(data$Fuel.Consumption.Comb..L.100.km., data$CO2.Emissions.g.km.)
+
+for (type in split(data, data$Fuel.Type)) {
+  print(cor(type$Fuel.Consumption.Comb..L.100.km., type$CO2.Emissions.g.km.))
+}
+```
+
+The (pearson) correlation coefficients are considerably better when considering the fuel type. This means for example using the fuel type and the combined fuel consumption as an input for regression, it should be possible to estimate the CO2 emission fairly well.
+
