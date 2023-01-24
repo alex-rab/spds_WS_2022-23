@@ -1,0 +1,275 @@
+---
+title: "Project_Regression"
+author: "Manuel Vujakovic"
+date: "2022-12-28"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(GGally)
+library(gridExtra)
+library(grid)
+library(reshape)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(nlme)
+library(olsrr)
+library(tidyverse)
+
+
+library(lazy)
+library(visreg)
+library(caret)
+library(performance)
+library(ggiraphExtra)
+
+
+library(sjPlot)
+library(sjmisc)
+
+library(interactions)
+```
+
+# Getting the Dataset
+```{r}
+co2_emissions <-  read.csv("./CO2_Emissions_Canada.csv", sep = ',')
+```
+
+# Prepering for the regression
+
+Simplifying the column names to be less complex. 
+```{r}
+co2_emissions <- co2_emissions %>% rename(Vehicle_class = Vehicle.Class,Engine_size = Engine.Size.L., Fuel_type = Fuel.Type, 
+                         Fuel_cons_city = Fuel.Consumption.City..L.100.km.,
+                         Fuel_cons_hwy = Fuel.Consumption.Hwy..L.100.km., 
+                         Fuel_cons_comb = Fuel.Consumption.Comb..L.100.km.,  Fuel_cons_comb_mpg = Fuel.Consumption.Comb..mpg.,
+                         co2_emis = CO2.Emissions.g.km.)
+
+```
+
+As for the second part we first remove duplicate data to ensure that our future model is better in identifying. Furthermore we also remove the Model column as it contains a large variety of different model names and model identification that directly translate on changes in the engine size, transmission, fuel type, cylinder count or vehicle class. As the Model itself is not very interesting to us as it is very fine grained while also requiring a lot of vehicle knowledge to understand what exactly cause the increase or decrease in co2 emissions.
+
+Lastly we also need to factor all the categorical and nominal data such as make, vehicle class, cylinder count, transmission, fuel type
+```{r}
+co2_clean <- co2_emissions[,-2] # removing the model column 
+
+co2_clean <- co2_clean %>% distinct() # removing the duplicate items contained
+
+# transforming all variables to factors
+co2_clean$Make <- factor(co2_clean$Make)
+co2_clean$Vehicle_class <- factor(co2_clean$Vehicle_class)
+co2_clean$Cylinders <- factor(co2_clean$Cylinders) # categorical either 3 4 5 6 8 10 12 16
+co2_clean$Transmission <- factor(co2_clean$Transmission)
+co2_clean$Fuel_type <- factor(co2_clean$Fuel_type)
+
+co2_clean %>% group_by(Make) %>% summarise(count = length(Make))
+co2_clean %>% group_by(Cylinders) %>% summarise(count = length(Cylinders))
+
+co2_clean <- subset(co2_clean, Make!="BUGATTI") #removing the Bugatti make as it is the only one with 16 cylinders to avoid multicollinearity  
+co2_clean$Make <- droplevels(co2_clean$Make)
+co2_clean$Cylinders <- droplevels(co2_clean$Cylinders)
+
+co2_clean %>% group_by(Transmission) %>% summarise(count = length(Transmission))
+# todo i dont need it but three are values that should be removed 
+
+co2_clean %>% group_by(Fuel_type) %>% summarise(count = length(Fuel_type))
+co2_clean <- subset(co2_clean, Fuel_type!="N") 
+co2_clean$Fuel_type <- droplevels(co2_clean$Fuel_type)
+
+
+
+co2_loged <- co2_clean
+
+co2_loged$co2_emis <- log(co2_loged$co2_emis)
+co2_loged$Fuel_cons_comb_mpg <- log(co2_loged$Fuel_cons_comb_mpg)
+co2_loged$Fuel_cons_comb <- log(co2_loged$Fuel_cons_comb)
+co2_loged$Fuel_cons_hwy <- log(co2_loged$Fuel_cons_hwy)
+co2_loged$Fuel_cons_city <- log(co2_loged$Fuel_cons_city)
+
+
+
+```
+
+# Correlation
+In the plot bellow we can see each variable plotted against each other. In particular we can see some correlation between 
+
+  + Engine size and Cylinders 
+  + Engine size and all the Fuel consumption including the co2 emissions
+  + Cylinders an all the Fuel consumption including the co2 emissions
+
+```{r fig.asp=0.9, fig.width= 13, echo=FALSE, message=FALSE, warning=TRUE, error=FALSE}
+pairs(co2_clean)
+```
+
+
+
+Between the different fuel consumption and the co2 emissions are also a clearly visible correlation (linear/curve).
+The Fuel consumption in the city and on the highway seem to be linearly dependent.Both fuel consumption city and highway are also quite tightly linearly dependent to the Fuel consumption combinded. All three fuel consumption (city, highway and combinded) are all non linearly dependent with the fuel consumption combinded in miles per gallon. 
+
+Lastly and most importantly all three fuel consumption (city, highway and combinded) (and even the fuel consumption in miles per gallon) are linearly depended (a curve for mile per gallon consumption) but seemingly as multiple (2-3)lines (curves). 
+
+```{r fig.asp=0.9, fig.width= 13, echo=FALSE, message=FALSE, warning=TRUE, error=FALSE}
+pairs(co2_clean[,7:11])
+```
+
+To check what causes these separate lines we colorized the most possible causes (Engine size, Cylinders, Transmission, Fuel type) from the resulting charts we can see that the separation is clearly definable by the Fuel type. What is also interesting in this charts is what we can see that co2 emission and fuel consumption increases with the engine size and that the same also goes for the number of cylinders in the engine which makes sense as the more cylinders an engine has the bigger the engine has to be.  
+
+```{r fig.asp=0.9, fig.width= 13}
+
+
+co2_emis_fuel_comb_engine <-ggplot(co2_clean) + 
+  geom_point( aes(Fuel_cons_comb_mpg, co2_emis, color=(Engine_size))) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+co2_emis_fuel_comb_cylinders<-ggplot(co2_clean) +
+  geom_point( aes(Fuel_cons_comb_mpg,co2_emis, color=Cylinders)) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+co2_emis_fuel_comb_transmission<-ggplot(co2_clean) +
+  geom_point( aes(Fuel_cons_comb_mpg,co2_emis, color=Transmission)) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+co2_emis_fuel_comb_fueltype<-ggplot(co2_clean) +
+  geom_point( aes(Fuel_cons_comb_mpg,co2_emis, color=Fuel_type)) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+co2_emis_fuel_comb_Vehicle <- ggplot(co2_clean) +
+  geom_point( aes(Fuel_cons_comb_mpg, co2_emis, color=(Vehicle_class))) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+co2_emis_fuel_comb_make <- ggplot(co2_clean) +
+  geom_point( aes(Fuel_cons_comb_mpg, co2_emis, color=(Make))) +
+  xlab("Fuel Consumption (miles/gallon)") + ylab("CO2 Emissions (g/km)")
+
+grid.arrange(co2_emis_fuel_comb_engine,co2_emis_fuel_comb_cylinders,co2_emis_fuel_comb_transmission,co2_emis_fuel_comb_fueltype)
+
+grid.arrange(co2_emis_fuel_comb_Vehicle,co2_emis_fuel_comb_make)
+
+
+```
+
+```{r fig.asp=0.9, fig.width= 13, message=FALSE}
+ggpairs(co2_clean, aes(colour= Fuel_type, alpha = 0.35), columns=c(7:11))
+```
+
+
+Caret training method 5 fold with 10 repeats
+
+```{r, warning=FALSE}
+fitControl <- trainControl(method = "repeatedcv",   
+                           number = 5,  # number of folds
+                           repeats = 10)     
+```
+
+
+```{r, warning=FALSE}
+set.seed(13)
+print("Fuel_cons_city")
+model_fuel_city <- lm(co2_emis ~ Fuel_cons_city * Fuel_type * Engine_size, co2_clean)
+train(co2_emis ~ Fuel_cons_city * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl)
+
+print("Fuel_cons_hwy")
+model_fuel_hwy <- lm(co2_emis ~ Fuel_cons_hwy * Fuel_type * Engine_size, co2_clean)
+train(co2_emis ~ Fuel_cons_hwy * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl)
+
+print("Fuel_cons_comb")
+model_fuel_comb <- lm(co2_emis ~ Fuel_cons_comb * Fuel_type * Engine_size, co2_clean)
+train(co2_emis ~ Fuel_cons_comb * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl)
+
+print("Fuel_cons_comb_mpg")
+
+# takes quite a while 
+
+lapply(1:20, \(x) train(update(co2_emis ~ 1, paste('. ~', sprintf('poly(Fuel_cons_comb_mpg, %s) * Fuel_type * Engine_size', x))), data= co2_clean, method="lm", trControl = fitControl))
+
+print("best model with poly of 4")
+
+model_fuel_comb_mpg <- lm(co2_emis ~ poly(Fuel_cons_comb_mpg,4) * Fuel_type * Engine_size, co2_clean)
+
+```
+
+```{r fig.asp=0.9, fig.width= 13}
+
+par(mfrow = c(4,4), mar=c(2,2,5,5))
+
+plot(model_fuel_city, main = "Fuel Consumption City")
+plot(model_fuel_hwy,main = "Fuel Consumption Highway")
+plot(model_fuel_comb, main = "Fuel Consumption Combined")
+plot(model_fuel_comb_mpg, main = "Fuel Consumption Combined(mpg)")
+```
+
+# Ploting the models
+
+They are quite hard to read
+```{r fig.asp=0.9, fig.width= 13}
+ggplot(co2_clean, aes(x = Fuel_cons_city, y= co2_emis, color=Fuel_type, fill=Cylinders)) + geom_point(alpha=0.03, size=co2_clean$Engine_size) +
+  geom_smooth(method = lm, formula = y ~ x)
+
+ggplot(co2_clean, aes(x = Fuel_cons_hwy, y= co2_emis, color=Fuel_type, fill=Cylinders)) + geom_point(alpha=0.03, size=co2_clean$Engine_size) +
+  geom_smooth(method = lm, formula = y ~ x)
+
+ggplot(co2_clean, aes(x = Fuel_cons_comb, y= co2_emis, color=Fuel_type, fill=Cylinders)) + geom_point(alpha=0.03, size=co2_clean$Engine_size) +
+  geom_smooth(method = lm, formula = y ~ x)
+
+ggplot(co2_clean, aes(x = Fuel_cons_comb_mpg, y= co2_emis, color=Fuel_type, fill=Cylinders)) + geom_point(alpha=0.03, size=co2_clean$Engine_size) +
+  geom_smooth(method = lm, formula = y ~ poly(x,4))  
+```
+
+```{r fig.asp=0.9, fig.width=16}
+d1 <- interact_plot(model=model_fuel_city, pred=Fuel_cons_city , modx = Fuel_type, mod2 = Engine_size, data=co2_clean, main.title = "Fuel Consumption City", x.label ="Fuel Consumption City", y.label = "CO2 Emissions (g/km)" )
+d2 <- interact_plot(model=model_fuel_hwy, pred=Fuel_cons_hwy , modx = Fuel_type, mod2 = Engine_size,data=co2_clean, main.title = "Fuel Consumption Highway", x.label ="Fuel Consumption Highway", y.label = "CO2 Emissions (g/km)" )
+d3 <- interact_plot(model=model_fuel_comb, pred=Fuel_cons_comb , modx = Fuel_type, mod2 = Engine_size,data=co2_clean, main.title = "Fuel Consumption Combined", x.label ="Fuel Consumption Combinded", y.label = "CO2 Emissions (g/km)" )
+d4 <- interact_plot(model=model_fuel_comb_mpg, pred=Fuel_cons_comb_mpg , modx = Fuel_type, mod2 = Engine_size,data=co2_clean, main.title = "Fuel Consumption Combined mpg", x.label ="Fuel Consumption Combined mpg", y.label = "CO2 Emissions (g/km)" )
+
+grid.arrange(d1, d2, d3, d4)
+```
+
+# Weighted models
+
+```{r}
+set.seed(13)
+print("Fuel_cons_city_wt")
+wt_city <- 1 / lm(abs(model_fuel_city$residuals) ~ model_fuel_city$fitted.values)$fitted.values^2
+train(co2_emis ~ Fuel_cons_city * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl, weights = wt_city)
+
+print("Fuel_cons_hwy_wt")
+wt_hwy <- 1 / lm(abs(model_fuel_hwy$residuals) ~ model_fuel_hwy$fitted.values)$fitted.values^2
+train(co2_emis ~ Fuel_cons_hwy * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl, weights = wt_hwy)
+
+print("Fuel_cons_comb_wt")
+wt_comb <- 1 / lm(abs(model_fuel_comb$residuals) ~ model_fuel_comb$fitted.values)$fitted.values^2
+train(co2_emis ~ Fuel_cons_comb * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl, weights = wt_comb)
+
+
+print("Fuel_cons_comb_mpg_wt")
+wt_comb_mpg <- 1 / lm(abs(model_fuel_comb_mpg$residuals) ~ model_fuel_comb_mpg$fitted.values)$fitted.values^2
+train(co2_emis ~ poly(Fuel_cons_comb_mpg,4) * Fuel_type * Engine_size, data = co2_clean, method="lm", trControl = fitControl, weights = wt_comb_mpg)
+
+```
+In general are the values of the predictions worse maybe better weighting would help. 
+
+# Best overall model
+
+```{r fig.asp=0.9, fig.width=13}
+model_co2_all<- lm(co2_emis ~ Fuel_cons_city* Fuel_type * Engine_size + Fuel_cons_hwy * Fuel_type * Engine_size + Fuel_cons_comb * Fuel_type * Engine_size + poly(Fuel_cons_comb_mpg,4)* Fuel_type * Engine_size, data= co2_clean)
+
+ols_step_backward_p(model_co2_all)
+```
+
+
+```{r}
+set.seed(13)
+print("General model ALL")
+model_all_final <- lm(co2_emis ~ Fuel_cons_city* Fuel_type * Engine_size + Fuel_cons_hwy + Fuel_cons_comb * Fuel_type * Engine_size + poly(Fuel_cons_comb_mpg,4)* Fuel_type * Engine_size, data= co2_clean)
+train(co2_emis ~ Fuel_cons_city* Fuel_type * Engine_size + Fuel_cons_hwy + Fuel_cons_comb * Fuel_type * Engine_size + poly(Fuel_cons_comb_mpg,4)* Fuel_type * Engine_size, data= co2_clean, method="lm", trControl = fitControl)
+
+```
+Model to complex to plot right. 
+
+
+
